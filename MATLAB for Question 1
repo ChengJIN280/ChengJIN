@@ -1,0 +1,116 @@
+%% Problem 1
+% Good habit: Clear the workspace and command window
+clear;
+clc;
+
+% Given parameters
+V0 = 1.02; % Voltage at Node 0 (Slack Node Voltage) [pu]
+ZL01 = 0.01; % Impedance between Node 0 and Node 1 [pu]
+ZL12 = 0.03 + 1i*0.01; % Impedance between Node 1 and Node 2 [pu]
+ZL23 = 0.05 + 1i*0.01; % Impedance between Node 2 and Node 3 [pu]
+
+YLoad1 = 0.1 - 1i*0.03; % Load admittance at Node 1 [pu]
+SGEN2 = 0.01; % Power generation at Node 2 [pu]
+SLOAD3 = 0.8 - 1i*0.01; % Load power at Node 3 [pu]
+
+% Admittance calculations
+YL01 = 1 / ZL01; % Admittance between Node 0 and Node 1
+YL12 = 1 / ZL12; % Admittance between Node 1 and Node 2
+YL23 = 1 / ZL23; % Admittance between Node 2 and Node 3
+
+% Extract the load power components at Node 3
+Pload3 = real(SLOAD3); % Active power component
+Qload3 = imag(SLOAD3); % Reactive power component
+
+% Node Admittance Matrix (Y matrix)
+Y = [YL01, -YL01, 0, 0;
+    -YL01, YL01 + YL12 + YLoad1, -YL12, 0;
+    0, -YL12, YL12 + YL23, -YL23;
+    0, 0, -YL23, YL23];
+
+% Extract the conductance (G) and susceptance (B) from the admittance matrix
+G = real(Y); % Conductance matrix
+B = imag(Y); % Susceptance matrix
+
+%% Define Power Balance Equations
+% Power balance equations
+f = @(V1, V2, V3, theta1, theta2, theta3) [
+    % Active power balance at Node 1
+    V0 * V1 * (G(1,2) * cos(theta1) + B(1,2) * sin(theta1)) + ...
+    V1^2 * G(2,2) + V1 * V2 * (G(2,3) * cos(theta1 - theta2) + B(2,3) * sin(theta1 - theta2));
+
+    % Active power balance at Node 2
+    V1 * V2 * (G(2,3) * cos(theta2 - theta1) + B(2,3) * sin(theta2 - theta1)) + ...
+    V2^2 * G(3,3) + V2 * V3 * (G(3,4) * cos(theta2 - theta3) + B(3,4) * sin(theta2 - theta3)) - real(SGEN2);
+
+    % Active power balance at Node 3
+    V2 * V3 * (G(3,4) * cos(theta3 - theta2) + B(3,4) * sin(theta3 - theta2)) + ...
+    V3^2 * G(4,4) + Pload3;
+
+    % Reactive power balance at Node 1
+    V0 * V1 * (G(1,2) * sin(theta1) - B(1,2) * cos(theta1)) - ...
+    V1^2 * B(2,2) + V1 * V2 * (G(2,3) * sin(theta1 - theta2) - B(2,3) * cos(theta1 - theta2));
+
+    % Reactive power balance at Node 2
+    V1 * V2 * (G(2,3) * sin(theta2 - theta1) - B(2,3) * cos(theta2 - theta1)) - ...
+    V2^2 * B(3,3) + V2 * V3 * (G(3,4) * sin(theta2 - theta3) - B(3,4) * cos(theta2 - theta3));
+
+    % Reactive power balance at Node 3
+    V2 * V3 * (G(3,4) * sin(theta3 - theta2) - B(3,4) * cos(theta3 - theta2)) - ...
+    V3^2 * B(4,4) + Qload3;
+];
+
+% Convert the equations into a single-variable function for solving
+fp = @(x) f(x(1), x(2), x(3), x(4), x(5), x(6));
+
+%% Solve Using fsolve
+[x, fval, info] = fsolve(fp, [1.0;1.0;1.0;0;0;0]);
+
+% Extract computation results
+V1 = x(1); % Voltage magnitude at Node 1
+V2 = x(2); % Voltage magnitude at Node 2
+V3 = x(3); % Voltage magnitude at Node 3
+theta1 = x(4); % Voltage angle at Node 1
+theta2 = x(5); % Voltage angle at Node 2
+theta3 = x(6); % Voltage angle at Node 3
+
+%% Display Results
+fprintf('Node Voltages:\n');
+fprintf('V0 = %.4f pu (Slack Node)\n', V0);
+fprintf('V1 = %.4f pu, θ1 = %.4f rad\n', V1, theta1);
+fprintf('V2 = %.4f pu, θ2 = %.4f rad\n', V2, theta2);
+fprintf('V3 = %.4f pu, θ3 = %.4f rad\n', V3, theta3);
+
+% Extract results
+V1_complex = V1 * exp(1i * theta1); % Complex voltage at Node 1
+V2_complex = V2 * exp(1i * theta2); % Complex voltage at Node 2
+V3_complex = V3 * exp(1i * theta3); % Complex voltage at Node 3
+
+%% Calculate Line Currents
+I01 = (V1_complex - V0) * YL01; % Current from Node 0 to Node 1
+I12 = (V2_complex - V1_complex) * YL12; % Current from Node 1 to Node 2
+I23 = (V3_complex - V2_complex) * YL23; % Current from Node 2 to Node 3
+fprintf('\nLine Currents:\n');
+fprintf('I01 = %.4f + j%.4f pu\n', real(I01), imag(I01));
+fprintf('I12 = %.4f + j%.4f pu\n', real(I12), imag(I12));
+fprintf('I23 = %.4f + j%.4f pu\n', real(I23), imag(I23));
+
+%% Voltage Range Check
+fprintf('\nVoltage Range Check:\n');
+if V1 >= 0.96 && V1 <= 1.04
+    fprintf('Node 1 Voltage is within statutory range.\n');
+else
+    fprintf('Node 1 Voltage is out of statutory range!\n');
+end
+
+if V2 >= 0.96 && V2 <= 1.04
+    fprintf('Node 2 Voltage is within statutory range.\n');
+else
+    fprintf('Node 2 Voltage is out of statutory range!\n');
+end
+
+if V3 >= 0.96 && V3 <= 1.04
+    fprintf('Node 3 Voltage is within statutory range.\n');
+else
+    fprintf('Node 3 Voltage is out of statutory range!\n');
+end
