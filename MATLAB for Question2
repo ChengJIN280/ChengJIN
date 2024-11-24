@@ -1,0 +1,105 @@
+% 清理工作区和命令窗口
+clear;
+clc;
+
+% Node voltages
+V0 = 1.02; % Voltage at Node 0 [pu]
+
+% Line impedances
+ZL01 = 0.01; % Impedance between Node 0 and Node 1 [pu]
+ZL12 = 0.03 + 1i * 0.01; % Impedance between Node 1 and Node 2 [pu]
+ZL23 = 0.05 + 1i * 0.01; % Impedance between Node 2 and Node 3 [pu]
+
+% Load and generation
+Sload3 = 0.8 - 1i * 0.01; % Load at Node 3 [pu]
+Yload1 = 0.1 - 1i * 0.03; % Load admittance at Node 1
+
+% Extract real and imaginary components of Node 3's load power
+Pload3 = real(Sload3); % Active power
+Qload3 = imag(Sload3); % Reactive power
+
+% Calculate admittances from impedances
+YL01 = 1 / ZL01; % Admittance between Node 0 and Node 1
+YL12 = 1 / ZL12; % Admittance between Node 1 and Node 2
+YL23 = 1 / ZL23; % Admittance between Node 2 and Node 3
+
+% Admittance matrix for the section between Node 0 and Node 2
+Y1 = [YL01, -YL01, 0;
+     -YL01, YL01 + YL12 + Yload1, -YL12;
+      0, -YL12, YL12];
+
+% Extract elements from the admittance matrix (real and imaginary parts)
+G01 = real(Y1(1,2)); B01 = imag(Y1(1,2)); % Node 0 to Node 1
+G11 = real(Y1(2,2)); B11 = imag(Y1(2,2)); % Node 1
+G12 = real(Y1(2,3)); B12 = imag(Y1(2,3)); % Node 1 to Node 2
+G22 = real(Y1(3,3)); B22 = imag(Y1(3,3)); % Node 2
+
+% Admittance matrix for the section between Node 2 and Node 3
+Y2 = [YL23, -YL23;
+     -YL23, YL23];
+
+% Extract elements from the admittance matrix (real and imaginary parts)
+G22_prime = real(Y2(1,1)); B22_prime = imag(Y2(1,1)); % Node 2'
+G23 = real(Y2(1,2)); B23 = imag(Y2(1,2)); % Node 2' to Node 3
+G33 = real(Y2(2,2)); B33 = imag(Y2(2,2)); % Node 3
+
+% Initialize variables to track the minimum V2_prime
+min_V2_prime = Inf; % Start with infinity
+best_x = []; % To store the solution corresponding to min_V2_prime
+best_V3 = []; % To store the corresponding V3
+
+% Loop over the voltage range of Node 3 (0.96 to 1.04)
+for V3 = 0.96:0.01:1.04
+    % Define the power balance equations
+    f = @(x) [
+        % Active power balance at Node 1
+        V0*x(1)*(G01*cos(x(4)) + B01*sin(x(4))) + x(1)^2*G11 + x(1)*x(2)*(G12*cos(x(4) - x(5)) + B12*sin(x(4) - x(5)));
+        % Active power balance at Node 2
+        x(1)*x(2)*(G12*cos(x(5) - x(4)) + B12*sin(x(5) - x(4))) + x(2)^2*G22 + x(8);
+        % Active power balance at Node 2'
+        x(3)*V3*(G23*cos(x(6) - x(7)) + B23*sin(x(6) - x(7))) + x(3)^2*G22_prime - x(8);
+        % Active power balance at Node 3
+        x(3)*V3*(G23*cos(x(7) - x(6)) + B23*sin(x(7) - x(6))) + V3^2*G33 + Pload3;
+        % Reactive power balance at Node 1
+        V0*x(1)*(G01*sin(x(4)) - B01*cos(x(4))) - x(1)^2*B11 + x(1)*x(2)*(G12*sin(x(4) - x(5)) - B12*cos(x(4) - x(5)));
+        % Reactive power balance at Node 2
+        x(1)*x(2)*(G12*sin(x(5) - x(4)) - B12*cos(x(5) - x(4))) - x(2)^2*B22;
+        % Reactive power balance at Node 2'
+        -x(3)^2*B22_prime + x(3)*V3*(G23*sin(x(6) - x(7)) - B23*cos(x(6) - x(7))) - x(9);
+        % Reactive power balance at Node 3
+        x(3)*V3*(G23*sin(x(7) - x(6)) - B23*cos(x(7) - x(6))) - V3^2*B33 + Qload3
+    ];
+
+    % Initial guess for the variables
+    x0 = [1.02; 1.02; 1.02; 0; 0; 0; 0; 0; 0];
+
+    % Solve the nonlinear equations using fsolve
+    options = optimoptions('fsolve', 'Display', 'off');
+    [x, ~, exitflag] = fsolve(f, x0, options);
+
+    % Check if the solution is valid
+    if exitflag > 0 % Solution found
+        V2_prime = x(3); % Extract V2_prime
+        if V2_prime < min_V2_prime
+            % Update the minimum V2_prime
+            min_V2_prime = V2_prime;
+            best_x = x; % Store the solution
+            best_V3 = V3; % Store the corresponding V3
+        end
+    else
+        fprintf('Solver failed for V3 = %.2f\n', V3);
+    end
+end
+
+fprintf('Minimum V2_prime: %.4f\n', min_V2_prime);
+fprintf('Corresponding V3: %.2f\n', best_V3);
+fprintf('Optimal variables:\n');
+fprintf('V1 = %.4f\n', best_x(1));
+fprintf('V2 = %.4f\n', best_x(2));
+fprintf('V2_prime = %.4f\n', best_x(3));
+fprintf('theta1 = %.4f rad\n', best_x(4));
+fprintf('theta2 = %.4f rad\n', best_x(5));
+fprintf('theta2_p = %.4f rad\n', best_x(6));
+fprintf('theta3 = %.4f rad\n', best_x(7));
+fprintf('P = %.4f\n', best_x(8));
+fprintf('Q = %.4f\n', best_x(9));
