@@ -1,0 +1,108 @@
+% Clear the workspace and command window
+clear;
+clc;
+
+% System parameters
+V0 = 1.02; % Slack node voltage [pu]
+V3_fixed = 1.0; % Fixed voltage at Node 3 [pu]
+ZL01 = 0.01; % Impedance from node 0 to node 1 [pu]
+ZL12 = 0.03 + 1i * 0.01; % Impedance from node 1 to node 2 [pu]
+ZL23 = 0.05 + 1i * 0.01; % Impedance from node 2 to node 3 [pu]
+Sload3 = 0.8 - 1i * 0.01; % Load at node 3 [pu]
+
+% Admittance calculations
+YL01 = 1 / ZL01; % Admittance from node 0 to node 1
+YL12 = 1 / ZL12; % Admittance from node 1 to node 2
+YL23 = 1 / ZL23; % Admittance from node 2 to node 3
+Yload1 = 0.1 - 1i * 0.03; % Load admittance at node 1
+Pload3 = real(Sload3); % Active power at node 3
+Qload3 = imag(Sload3); % Reactive power at node 3
+
+% Extract G and B matrix elements for admittance matrix formulation
+% Node 0 to Node 2
+Y1 = [YL01, -YL01, 0;
+      -YL01, YL01 + YL12 + Yload1, -YL12;
+       0, -YL12, YL12];
+G01 = real(Y1(1, 2)); B01 = imag(Y1(1, 2));
+G11 = real(Y1(2, 2)); B11 = imag(Y1(2, 2));
+G12 = real(Y1(2, 3)); B12 = imag(Y1(2, 3));
+G22 = real(Y1(3, 3)); B22 = imag(Y1(3, 3));
+
+% Node 2 to Node 3
+Y2 = [YL23, -YL23;
+      -YL23, YL23];
+G22_prime = real(Y2(1, 1)); B22_prime = imag(Y2(1, 1));
+G23 = real(Y2(1, 2)); B23 = imag(Y2(1, 2));
+G33 = real(Y2(2, 2)); B33 = imag(Y2(2, 2));
+
+% Initialize analysis for reactive power range
+Q_MFC_values = 0.0:0.05:0.5; % Reactive power values [pu]
+V2_results = zeros(size(Q_MFC_values)); % To store V2 results
+Loss_results = zeros(size(Q_MFC_values)); % To store line loss results
+
+% Loop through each Q_MFC value
+for idx = 1:length(Q_MFC_values)
+    Q_MFC = Q_MFC_values(idx);
+
+    % Define the power balance equations
+    f = @(V1, V2, V2_prime, theta1, theta2, theta2_p, theta3, P, Q) [
+        % Active power balance at Node 1
+        V0 * V1 * (G01 * cos(theta1) + B01 * sin(theta1)) + V1^2 * G11 + V1 * V2 * (G12 * cos(theta1 - theta2) + B12 * sin(theta1 - theta2));
+        % Active power balance at Node 2
+        V1 * V2 * (G12 * cos(theta2 - theta1) + B12 * sin(theta2 - theta1)) + V2^2 * G22 + P;
+        % Active power balance at Node 2'
+        V2_prime * V3_fixed * (G23 * cos(theta2_p - theta3) + B23 * sin(theta2_p - theta3)) + V2_prime^2 * G22_prime - P;
+        % Active power balance at Node 3
+        V2_prime * V3_fixed * (G23 * cos(theta3 - theta2_p) + B23 * sin(theta3 - theta2_p)) + V3_fixed^2 * G33 - Pload3;
+        % Reactive power balance at Node 1
+        V0 * V1 * (G01 * sin(theta1) - B01 * cos(theta1)) - V1^2 * B11 + V1 * V2 * (G12 * sin(theta1 - theta2) - B12 * cos(theta1 - theta2));
+        % Reactive power balance at Node 2
+        V1 * V2 * (G12 * sin(theta2 - theta1) - B12 * cos(theta2 - theta1)) - V2^2 * B22 - Q_MFC;
+        % Reactive power balance at Node 2'
+        -V2_prime^2 * B22_prime + V2_prime * V3_fixed * (G23 * sin(theta2_p - theta3) - B23 * cos(theta2_p - theta3)) - Q;
+        % Reactive power balance at Node 3
+        V2_prime * V3_fixed * (G23 * sin(theta3 - theta2_p) - B23 * cos(theta3 - theta2_p)) - V3_fixed^2 * B33 + Qload3
+    ];
+
+    % Solve power balance equations
+    fp = @(x) f(x(1), x(2), x(3), x(4), x(5), x(6), x(7), x(8), x(9));
+    x0 = [1.02; 1.02; 1.02; 0; 0; 0; 0; 0; 0]; % Initial guess
+    options = optimoptions('fsolve', 'Display', 'off');
+    [x, ~, exitflag] = fsolve(fp, x0, options);
+
+    if exitflag > 0
+        % Store results
+        V2_results(idx) = x(2); % Voltage at Node 2
+        % Calculate line losses
+        Loss_results(idx) = abs(V0 - x(1))^2 * real(YL01) + ...
+                            abs(x(1) - x(2))^2 * real(YL12) + ...
+                            abs(x(3) - V3_fixed)^2 * real(YL23);
+    else
+        % Assign NaN for invalid results
+        V2_results(idx) = NaN;
+        Loss_results(idx) = NaN;
+    end
+end
+
+% Display results
+fprintf('Q_MFC Analysis:\n');
+for idx = 1:length(Q_MFC_values)
+    fprintf('Q_MFC = %.2f pu -> V2 = %.4f pu, Loss = %.4f pu\n', ...
+            Q_MFC_values(idx), V2_results(idx), Loss_results(idx));
+end
+
+% Plot results
+figure;
+subplot(2, 1, 1);
+plot(Q_MFC_values, V2_results, 'o-');
+xlabel('Q_{MFC} [pu]');
+ylabel('V2 [pu]');
+title('Node 2 Voltage vs Q_{MFC}');
+grid on;
+
+subplot(2, 1, 2);
+plot(Q_MFC_values, Loss_results, 's-');
+xlabel('Q_{MFC} [pu]');
+ylabel('Loss [pu]');
+title('Line Loss vs Q_{MFC}');
+grid on;
